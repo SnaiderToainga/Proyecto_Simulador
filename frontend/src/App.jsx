@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -10,11 +10,15 @@ export default function App() {
   const [resumen, setResumen] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [montoError, setMontoError] = useState('');
+  
+  // Nuevo estado para el historial de simulaciones
+  const [historial, setHistorial] = useState([]); 
 
+  // 1. Fetch para el Microservicio de Autenticación (Puerto 5001)
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://localhost:5083/api/auth/login', {
+      const res = await fetch('http://localhost:5001/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(loginData)
@@ -27,23 +31,45 @@ export default function App() {
       }
     } catch (error) {
       console.error("Error en login:", error);
-      alert("Error de conexión al servidor");
+      alert("Error de conexión con AuthService (5001)");
     }
   };
 
-    const formatearPlazo = (totalMeses) => {
+  // Cargar historial de la base de datos
+  const cargarHistorial = async () => {
+    try {
+      const res = await fetch('http://localhost:5002/api/simulador/historial', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setHistorial(data);
+      }
+    } catch (error) {
+      console.error("Error al cargar historial:", error);
+    }
+  };
+
+  // Disparar carga de historial al iniciar sesión exitosamente
+  useEffect(() => {
+    if (token) {
+      cargarHistorial();
+    }
+  }, [token]);
+
+  const formatearPlazo = (totalMeses) => {
     const meses = parseInt(totalMeses);
-    
+
     if (meses < 12) {
       return `${meses} mes${meses > 1 ? 'es' : ''}`;
     }
-    
+
     const anios = Math.floor(meses / 12);
     const mesesRestantes = meses % 12;
-    
+
     const textoAnios = `${anios} año${anios > 1 ? 's' : ''}`;
     const textoMeses = mesesRestantes > 0 ? ` y ${mesesRestantes} mes${mesesRestantes > 1 ? 'es' : ''}` : '';
-    
+
     return textoAnios + textoMeses;
   };
 
@@ -59,7 +85,7 @@ export default function App() {
     setForm({ ...form, tipo: nuevoTipo, plazo: nuevoPlazo });
   };
 
-    const renderPlazoOptions = () => {
+  const renderPlazoOptions = () => {
     switch (form.tipo) {
       case '0': // Preciso (Rango continuo de 3 a 48 meses)
         const opcionesPreciso = [];
@@ -78,6 +104,7 @@ export default function App() {
     }
   };
 
+  // 2. Fetch para el Microservicio del Simulador (Puerto 5002)
   const ejecutarSimulacion = async (overrideSistema = null) => {
     if (!form.monto || parseFloat(form.monto) < 1) {
       setMontoError("Ingrese un monto válido mayor o igual a $1");
@@ -85,15 +112,13 @@ export default function App() {
     } else {
       setMontoError('');
     }
-
     const sistemaAEnviar = overrideSistema !== null ? parseInt(overrideSistema) : parseInt(form.sistema);
-
     try {
-      const res = await fetch('http://localhost:5083/api/simulador', {
+      const res = await fetch('http://localhost:5002/api/simulador', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${token}` 
         },
         body: JSON.stringify({
           monto: parseFloat(form.monto),
@@ -102,28 +127,29 @@ export default function App() {
           sistema: sistemaAEnviar
         })
       });
-
       if (res.ok) {
         const data = await res.json();
         setResultados(data);
-
         const productos = {
           '0': 'Preciso',
           '1': 'Hipotecario Vivienda',
           '2': 'Vivienda de Interés Público',
           '3': 'Educación Superior'
         };
-
         setResumen({
           plazo: parseInt(form.plazo),
           producto: productos[form.tipo]
         });
+        
+        // Refresca la tabla del historial tras una nueva simulación exitosa
+        await cargarHistorial();
+        
       } else {
-        alert("Error al simular crédito");
+        alert("Error al simular crédito, token expirado o denegado.");
       }
     } catch (error) {
       console.error("Error en simulación:", error);
-      alert("Error de conexión al servidor");
+      alert("Error de conexión con SimuladorService (5002)");
     }
   };
 
@@ -300,7 +326,7 @@ export default function App() {
               boxShadow: '0 2px 10px rgba(0,0,0,0.05)',
               fontFamily: 'sans-serif'
             }}>
-              
+
               <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
@@ -309,33 +335,33 @@ export default function App() {
                 padding: '15px',
                 marginBottom: '25px'
               }}>
-                <div style={{textAlign: 'center', flex: 1, borderRight: '1px solid #ddd'}}>
-                  <div style={{fontSize: '12px', color: '#666', marginBottom: '5px', textTransform: 'uppercase'}}>Capital</div>
-                  <strong style={{fontSize: '16px', color: '#0B2265'}}>${primeraCuota.capital?.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
+                <div style={{ textAlign: 'center', flex: 1, borderRight: '1px solid #ddd' }}>
+                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '5px', textTransform: 'uppercase' }}>Capital</div>
+                  <strong style={{ fontSize: '16px', color: '#0B2265' }}>${primeraCuota.capital?.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
                 </div>
-                <div style={{textAlign: 'center', flex: 1, borderRight: '1px solid #ddd'}}>
-                  <div style={{fontSize: '12px', color: '#666', marginBottom: '5px', textTransform: 'uppercase'}}>Interés</div>
-                  <strong style={{fontSize: '16px', color: '#0B2265'}}>${primeraCuota.interes?.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
+                <div style={{ textAlign: 'center', flex: 1, borderRight: '1px solid #ddd' }}>
+                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '5px', textTransform: 'uppercase' }}>Interés</div>
+                  <strong style={{ fontSize: '16px', color: '#0B2265' }}>${primeraCuota.interes?.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
                 </div>
-                <div style={{textAlign: 'center', flex: 1}}>
-                  <div style={{fontSize: '12px', color: '#666', marginBottom: '5px', textTransform: 'uppercase'}}>Seguro</div>
-                  <strong style={{fontSize: '16px', color: '#0B2265'}}>${(primeraCuota.seguro || 0).toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
+                <div style={{ textAlign: 'center', flex: 1 }}>
+                  <div style={{ fontSize: '12px', color: '#666', marginBottom: '5px', textTransform: 'uppercase' }}>Seguro</div>
+                  <strong style={{ fontSize: '16px', color: '#0B2265' }}>${(primeraCuota.seguro || 0).toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
                 </div>
               </div>
 
-              <div style={{textAlign: 'center', marginBottom: '30px'}}>
-                <p style={{fontSize: '15px', color: '#555', margin: '0 0 10px 0'}}>Cuota referencial mensual</p>
-                <h1 style={{fontSize: '48px', color: '#8B0000', margin: '0 0 10px 0', fontWeight: 'bold'}}>
+              <div style={{ textAlign: 'center', marginBottom: '30px' }}>
+                <p style={{ fontSize: '15px', color: '#555', margin: '0 0 10px 0' }}>Cuota referencial mensual</p>
+                <h1 style={{ fontSize: '48px', color: '#8B0000', margin: '0 0 10px 0', fontWeight: 'bold' }}>
                   ${primeraCuota.cuota?.toLocaleString('es-EC', { minimumFractionDigits: 2 })}
                 </h1>
-                <p style={{fontSize: '14px', color: '#666', margin: '0'}}>
+                <p style={{ fontSize: '14px', color: '#666', margin: '0' }}>
                   Durante {formatearPlazo(resumen.plazo)} a una tasa del {tasaReferencial}%
                 </p>
                 {form.sistema === '1' && (
-                  <p style={{fontSize: '12px', color: '#999', margin: '5px 0 0 0'}}>* Cuota decreciente en el tiempo (Sistema Alemán)</p>
+                  <p style={{ fontSize: '12px', color: '#999', margin: '5px 0 0 0' }}>* Cuota decreciente en el tiempo (Sistema Alemán)</p>
                 )}
                 {form.sistema === '0' && (
-                  <p style={{fontSize: '12px', color: '#999', margin: '5px 0 0 0'}}>* Cuota varía ligeramente por recálculo de seguro sobre saldos</p>
+                  <p style={{ fontSize: '12px', color: '#999', margin: '5px 0 0 0' }}>* Cuota varía ligeramente por recálculo de seguro sobre saldos</p>
                 )}
               </div>
 
@@ -343,35 +369,35 @@ export default function App() {
                 borderTop: '1px solid #eee',
                 paddingTop: '20px'
               }}>
-                <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '14px'}}>
-                  <span style={{color: '#555'}}>Capital Financiado:</span>
-                  <strong style={{color: '#333'}}>${capitalFinanciado.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '14px' }}>
+                  <span style={{ color: '#555' }}>Capital Financiado:</span>
+                  <strong style={{ color: '#333' }}>${capitalFinanciado.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
                 </div>
-                <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '14px'}}>
-                  <span style={{color: '#555'}}>Total de interés:</span>
-                  <strong style={{color: '#333'}}>${totalInteres.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '14px' }}>
+                  <span style={{ color: '#555' }}>Total de interés:</span>
+                  <strong style={{ color: '#333' }}>${totalInteres.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
                 </div>
-                <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '14px'}}>
-                  <span style={{color: '#555'}}>Total seguro desgravamen:</span>
-                  <strong style={{color: '#333'}}>${totalSeguro.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px', fontSize: '14px' }}>
+                  <span style={{ color: '#555' }}>Total seguro desgravamen:</span>
+                  <strong style={{ color: '#333' }}>${totalSeguro.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
                 </div>
-                
+
                 <div style={{
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  marginTop: '15px', 
-                  paddingTop: '15px', 
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginTop: '15px',
+                  paddingTop: '15px',
                   borderTop: '1px dashed #ccc',
                   fontSize: '16px'
                 }}>
-                  <span style={{fontWeight: 'bold', color: '#333'}}>Total a pagar:</span>
-                  <strong style={{color: '#8B0000', fontSize: '18px'}}>${totalAPagar.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
+                  <span style={{ fontWeight: 'bold', color: '#333' }}>Total a pagar:</span>
+                  <strong style={{ color: '#8B0000', fontSize: '18px' }}>${totalAPagar.toLocaleString('es-EC', { minimumFractionDigits: 2 })}</strong>
                 </div>
               </div>
 
-              <div style={{textAlign: 'center', marginTop: '25px'}}>
-                <button 
-                  type="button" 
+              <div style={{ textAlign: 'center', marginTop: '25px' }}>
+                <button
+                  type="button"
                   onClick={() => setIsModalOpen(true)}
                   style={{
                     background: 'none',
@@ -389,8 +415,50 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* Historial de Simulaciones Registradas */}
+        {historial.length > 0 && (
+          <div style={{ width: '100%', marginTop: '40px' }}>
+            <h3 style={{ color: '#0B2265', borderBottom: '3px solid #8B0000', paddingBottom: '10px', marginBottom: '20px', fontSize: '22px' }}>
+              Historial de Simulaciones Registradas
+            </h3>
+            <div style={{ overflowX: 'auto', backgroundColor: '#fff', borderRadius: '8px', boxShadow: '0 4px 15px rgba(0,0,0,0.06)' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontFamily: 'sans-serif' }}>
+                <thead style={{ backgroundColor: '#0B2265', color: '#fff' }}>
+                  <tr>
+                    <th style={{ padding: '14px 16px', fontWeight: '500' }}>Fecha</th>
+                    <th style={{ padding: '14px 16px', fontWeight: '500' }}>Crédito</th>
+                    <th style={{ padding: '14px 16px', fontWeight: '500' }}>Monto</th>
+                    <th style={{ padding: '14px 16px', fontWeight: '500' }}>Plazo</th>
+                    <th style={{ padding: '14px 16px', fontWeight: '500' }}>Sistema</th>
+                    <th style={{ padding: '14px 16px', fontWeight: '500' }}>Cuota Ref.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historial.map((sim, idx) => (
+                    <tr key={sim.id || idx} style={{ borderBottom: '1px solid #eaeaea', backgroundColor: idx % 2 === 0 ? '#fff' : '#f9f9f9' }}>
+                      <td style={{ padding: '14px 16px', color: '#555' }}>
+                        {new Date(sim.fecha).toLocaleDateString()}
+                      </td>
+                      <td style={{ padding: '14px 16px', color: '#333' }}>{sim.tipoCredito}</td>
+                      <td style={{ padding: '14px 16px', color: '#333' }}>
+                        ${sim.monto.toLocaleString('es-EC', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ padding: '14px 16px', color: '#333' }}>{formatearPlazo(sim.plazoMeses)}</td>
+                      <td style={{ padding: '14px 16px', color: '#333' }}>{sim.sistemaAmortizacion}</td>
+                      <td style={{ padding: '14px 16px', fontWeight: '600', color: '#8B0000' }}>
+                        ${sim.cuotaReferencial.toLocaleString('es-EC', { minimumFractionDigits: 2 })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
+      {/* Modal - Tabla Completa */}
       {isModalOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
